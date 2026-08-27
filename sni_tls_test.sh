@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 TIMEOUT=1
 CONC=8
 ROUNDS=3
 TOPN=0
 DOMAINS_FILE=""
-TLS13=0
+TLS13=1
 EXTRA_DOMAINS=()
 
 DEFAULT_DOMAINS="b.6sc.co lpcdn.lpsnmedia.net j.6sc.co xp.apple.com s.go-mpulse.net www.nvidia.com statici.icloud.com sisu.xboxlive.com www.wowt.com fpinit.itunes.apple.com c.s-microsoft.com www.icloud.com r.bing.com cdn.userway.org ts2.tc.mm.bing.net a0.awsstatic.com azure.microsoft.com amp-api-edge.apps.apple.com j.6sc.co www.xilinx.com apps.mzstatic.com devblogs.microsoft.com snap.licdn.com s0.awsstatic.com ipv6.6sc.co th.bing.com ts4.tc.mm.bing.net drivers.amd.com go.microsoft.com b.6sc.co lpcdn.lpsnmedia.net amd.com s.mp.marsflag.com th.bing.com d2c.aws.amazon.com ts1.tc.mm.bing.net t0.m.awsstatic.com sisu.xboxlive.com fpinit.itunes.apple.com digitalassets.tesla.com t0.m.awsstatic.com www.oracle.com downloadmirror.intel.com iosapps.itunes.apple.com cua-chat-ui.tesla.com mscom.demdex.net www.xbox.com i7158c100-ds-aksb-a.akamaihd.net amd.com intelcorp.scene7.com j.6sc.co www.amd.com gray.video-player.arcpublishing.com c.6sc.co s0.awsstatic.com s.mp.marsflag.com ts3.tc.mm.bing.net www.xilinx.com ce.mf.marsflag.com drivers.amd.com www.tesla.com www.apple.com www.microsoft.com"
@@ -16,7 +16,7 @@ die() { printf '错误: %s\n' "$*" >&2; exit 1; }
 
 usage() {
 cat <<EOF
-SNI TLS 握手延迟测试 v$VERSION —— 用于 Reality 协议 SNI 筛选
+Reality 协议域名优选脚本 v$VERSION
 
 用法:
   $0 [选项] [域名...]
@@ -29,12 +29,13 @@ SNI TLS 握手延迟测试 v$VERSION —— 用于 Reality 协议 SNI 筛选
   -r N       每个域名测试次数, 取平均值 (默认: 3)
   -n N       只显示最快的 N 个结果
   -f 文件    从文件读取域名 (每行一个, 支持注释, 提供时替代默认列表)
-  --tls13    同时检测 TLS 1.3 支持 (Reality 要求目标支持 TLS 1.3)
+  --no-tls13 关闭 TLS 1.3 支持检测 (默认开启, Reality 要求目标支持 TLS 1.3)
   -h, --help     显示本帮助
   -V, --version  显示版本
 
 说明:
   不带域名参数时使用内置常用网站列表 (自动去重)。
+  默认检测每个域名的 TLS 1.3 支持情况, --no-tls13 可关闭。
   每个域名默认测试 3 次取平均值, 全部成功的列为稳定域名,
   部分失败的单独标出 (格式: 平均延迟 成功次数/总次数)。
   结果按 TLS 握手延迟升序排列, 延迟越低越适合作为 Reality SNI。
@@ -58,6 +59,7 @@ while [ $# -gt 0 ]; do
     -n) [ $# -ge 2 ] || die "-n 需要参数"; TOPN="$2"; shift 2 ;;
     -f) [ $# -ge 2 ] || die "-f 需要参数"; DOMAINS_FILE="$2"; shift 2 ;;
     --tls13) TLS13=1; shift ;;
+    --no-tls13) TLS13=0; shift ;;
     -h|--help) usage; exit 0 ;;
     -V|--version) printf 'sni_tls_test.sh %s\n' "$VERSION"; exit 0 ;;
     --) shift; while [ $# -gt 0 ]; do EXTRA_DOMAINS+=("$1"); shift; done ;;
@@ -194,7 +196,7 @@ test_one() {
   printf '.' >&2
 }
 
-printf 'SNI TLS 握手延迟测试 v%s\n' "$VERSION"
+printf 'Reality 协议域名优选脚本 v%s\n' "$VERSION"
 printf 'openssl: %s | 计时: %s | 超时工具: %s\n' \
   "$(openssl version 2>/dev/null || echo unknown)" "$CLOCK" "$TMO_DESC"
 if [ "$TLS13" -eq 1 ] && [ "$TLS13_CAP" = "no" ]; then
