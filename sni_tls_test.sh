@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 TIMEOUT=1
 CONC=8
+ROUNDS=3
 TOPN=0
 DOMAINS_FILE=""
 TLS13=0
@@ -25,6 +26,7 @@ SNI TLS 握手延迟测试 v$VERSION —— 用于 Reality 协议 SNI 筛选
 选项:
   -t 秒      单次 TLS 握手超时秒数 (默认: 1)
   -c N       并发测试数 (默认: 8)
+  -r N       每个域名测试次数, 取平均值 (默认: 3)
   -n N       只显示最快的 N 个结果
   -f 文件    从文件读取域名 (每行一个, 支持注释, 提供时替代默认列表)
   --tls13    同时检测 TLS 1.3 支持 (Reality 要求目标支持 TLS 1.3)
@@ -33,6 +35,8 @@ SNI TLS 握手延迟测试 v$VERSION —— 用于 Reality 协议 SNI 筛选
 
 说明:
   不带域名参数时使用内置常用网站列表 (自动去重)。
+  每个域名默认测试 3 次取平均值, 全部成功的列为稳定域名,
+  部分失败的单独标出 (格式: 平均延迟 成功次数/总次数)。
   结果按 TLS 握手延迟升序排列, 延迟越低越适合作为 Reality SNI。
   测量的是完整 TCP+TLS 握手耗时 (与 openssl s_client 一致)。
 
@@ -50,6 +54,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -t) [ $# -ge 2 ] || die "-t 需要参数"; TIMEOUT="$2"; shift 2 ;;
     -c) [ $# -ge 2 ] || die "-c 需要参数"; CONC="$2"; shift 2 ;;
+    -r) [ $# -ge 2 ] || die "-r 需要参数"; ROUNDS="$2"; shift 2 ;;
     -n) [ $# -ge 2 ] || die "-n 需要参数"; TOPN="$2"; shift 2 ;;
     -f) [ $# -ge 2 ] || die "-f 需要参数"; DOMAINS_FILE="$2"; shift 2 ;;
     --tls13) TLS13=1; shift ;;
@@ -65,6 +70,8 @@ case "$TIMEOUT" in ''|*[!0-9]*) die "-t 必须为正整数秒" ;; esac
 [ "$TIMEOUT" -ge 1 ] || die "-t 必须 >= 1"
 case "$CONC" in ''|*[!0-9]*) die "-c 必须为正整数" ;; esac
 [ "$CONC" -ge 1 ] || die "-c 必须 >= 1"
+case "$ROUNDS" in ''|*[!0-9]*) die "-r 必须为正整数" ;; esac
+[ "$ROUNDS" -ge 1 ] || die "-r 必须 >= 1"
 case "$TOPN" in ''|*[!0-9]*) die "-n 必须为非负整数" ;; esac
 
 if [ -n "$DOMAINS_FILE" ]; then
@@ -144,21 +151,37 @@ fi
 
 test_one() {
   local d="$1" out="$2"
-  local t1 t2 ms status tls13
+  local t1 t2 ms status tls13 i okcnt failcnt sum avg elapsed slowfail
   tls13="n/a"
-  t1=$(now_ms)
-  if run_with_timeout "$TIMEOUT" openssl s_client -connect "$d:443" -servername "$d" </dev/null >/dev/null 2>&1; then
-    t2=$(now_ms)
-    ms=$((t2 - t1))
-    [ "$ms" -lt 1 ] && ms=1
-    status="OK"
-  else
-    t2=$(now_ms)
-    ms=$((t2 - t1))
-    if [ "$ms" -ge $((TIMEOUT * 1000 - 150)) ]; then status="TIMEOUT"; else status="FAIL"; fi
+  okcnt=0
+  failcnt=0
+  sum=0
+  slowfail=0
+  for ((i = 0; i < ROUNDS; i++)); do
+    t1=$(now_ms)
+    if run_with_timeout "$TIMEOUT" openssl s_client -connect "$d:443" -servername "$d" </dev/null >/dev/null 2>&1; then
+      t2=$(now_ms)
+      ms=$((t2 - t1))
+      [ "$ms" -lt 1 ] && ms=1
+      sum=$((sum + ms))
+      okcnt=$((okcnt + 1))
+    else
+      t2=$(now_ms)
+      elapsed=$((t2 - t1))
+      if [ "$elapsed" -ge $((TIMEOUT * 1000 - 150)) ]; then slowfail=1; fi
+      failcnt=$((failcnt + 1))
+    fi
+  done
+  if [ "$okcnt" -eq 0 ]; then
     ms=999999999
+    if [ "$slowfail" -eq 1 ]; then status="TIMEOUT"; else status="FAIL"; fi
+  else
+    avg=$(((sum + okcnt / 2) / okcnt))
+    [ "$avg" -lt 1 ] && avg=1
+    ms="$avg"
+    if [ "$failcnt" -eq 0 ]; then status="OK"; else status="PART"; fi
   fi
-  if [ "$TLS13" -eq 1 ] && [ "$status" = "OK" ]; then
+  if [ "$TLS13" -eq 1 ] && [ "$okcnt" -gt 0 ]; then
     if [ "$TLS13_CAP" = "yes" ]; then
       if run_with_timeout "$TIMEOUT" openssl s_client -tls1_3 -connect "$d:443" -servername "$d" </dev/null >/dev/null 2>&1; then
         tls13="yes"
@@ -167,7 +190,7 @@ test_one() {
       fi
     fi
   fi
-  printf '%s\t%s\t%s\t%s\n' "$ms" "$status" "$tls13" "$d" > "$out"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$ms" "$status" "$tls13" "$d" "$okcnt/$ROUNDS" > "$out"
   printf '.' >&2
 }
 
@@ -177,7 +200,12 @@ printf 'openssl: %s | 计时: %s | 超时工具: %s\n' \
 if [ "$TLS13" -eq 1 ] && [ "$TLS13_CAP" = "no" ]; then
   printf '警告: 当前 openssl 不支持 TLS 1.3, TLS1.3 列将显示 n/a\n' >&2
 fi
-printf '超时: %ss | 并发: %s | 域名数: %s (已去重)\n\n' "$TIMEOUT" "$CONC" "$N_DOMAINS"
+if [ "$ROUNDS" -eq 1 ]; then
+  ROUNDS_DESC="每域名 1 次"
+else
+  ROUNDS_DESC="每域名 $ROUNDS 次取平均"
+fi
+printf '超时: %ss | 并发: %s | %s | 域名数: %s\n\n' "$TIMEOUT" "$CONC" "$ROUNDS_DESC" "$N_DOMAINS"
 
 idx=0
 for d in $DOMAINS; do
@@ -200,10 +228,11 @@ fi
 
 rank=0
 ok=0
+part=0
 fail=0
 best=""
 best13=""
-while IFS=$'\t' read -r ms status tls13 d; do
+while IFS=$'\t' read -r ms status tls13 d okcnt; do
   if [ "$status" = "OK" ]; then
     ok=$((ok + 1))
     rank=$((rank + 1))
@@ -216,6 +245,14 @@ while IFS=$'\t' read -r ms status tls13 d; do
         printf '%-4d  %-44s  %8d ms\n' "$rank" "$d" "$ms"
       fi
     fi
+  elif [ "$status" = "PART" ]; then
+    part=$((part + 1))
+    cell="$(printf '%d ms %s' "$ms" "$okcnt")"
+    if [ "$TLS13" -eq 1 ]; then
+      printf '%-4s  %-44s  %11s  %-6s\n' '-' "$d" "$cell" "$tls13"
+    else
+      printf '%-4s  %-44s  %11s\n' '-' "$d" "$cell"
+    fi
   else
     fail=$((fail + 1))
     if [ "$TLS13" -eq 1 ]; then
@@ -227,7 +264,7 @@ while IFS=$'\t' read -r ms status tls13 d; do
 done < "$TMP/all"
 
 printf '\n'
-summary="完成: 共 $N_DOMAINS 个域名, 成功 $ok, 失败/超时 $fail"
+summary="完成: 共 $N_DOMAINS 个域名, 稳定 $ok, 部分成功 $part, 失败/超时 $fail"
 if [ "$TOPN" -gt 0 ] && [ "$rank" -gt "$TOPN" ]; then
   summary="$summary (仅显示最快前 $TOPN 个)"
 fi

@@ -2,7 +2,7 @@
 
 用于 **Reality 协议筛选优质 SNI** 的 TLS 握手延迟测试脚本。
 
-原理与 `openssl s_client -connect 域名:443 -servername 域名` 相同：测量到目标站点的 **完整 TCP + TLS 握手耗时**，并发测试后按延迟升序排列，延迟越低、越稳定的大站越适合作为 Reality 的 SNI。可选检测目标是否支持 **TLS 1.3**（Reality 硬性要求）。
+原理与 `openssl s_client -connect 域名:443 -servername 域名` 相同：测量到目标站点的 **完整 TCP + TLS 握手耗时**，每个域名默认测试 3 次取平均值，并发测试后按延迟升序排列，延迟越低、越稳定的大站越适合作为 Reality 的 SNI。可选检测目标是否支持 **TLS 1.3**（Reality 硬性要求）。
 
 ## 快速开始
 
@@ -31,6 +31,7 @@ chmod +x sni_tls_test.sh
 |---|---|---|
 | `-t 秒` | 单次 TLS 握手超时秒数 | `1` |
 | `-c N` | 并发测试数 | `8` |
+| `-r N` | 每个域名测试次数，取平均值 | `3` |
 | `-n N` | 只显示最快的 N 个结果 | 全部显示 |
 | `-f 文件` | 从文件读取域名（提供时替代内置列表） | 内置列表 |
 | `--tls13` | 同时检测 TLS 1.3 支持 | 关闭 |
@@ -46,26 +47,28 @@ chmod +x sni_tls_test.sh
 ## 输出示例
 
 ```text
-SNI TLS 握手延迟测试 v1.0.0
+SNI TLS 握手延迟测试 v1.1.0
 openssl: OpenSSL 3.0.13 | 计时: bash 内置 EPOCHREALTIME | 超时工具: GNU timeout
-超时: 1s | 并发: 8 | 域名数: 47 (已去重)
+超时: 1s | 并发: 8 | 每域名 3 次取平均 | 域名数: 5
 
 #     DOMAIN                                            LATENCY  TLS1.3
 1     amd.com                                             47 ms  yes
 2     www.icloud.com                                      54 ms  yes
 3     www.nvidia.com                                      54 ms  yes
+-     unstable.example.com                            120 ms 1/3  yes
 -     192.0.2.1                                         TIMEOUT
 -     nonexistent.invalid                                  FAIL
 
-完成: 共 5 个域名, 成功 3, 失败/超时 2
+完成: 共 6 个域名, 稳定 3, 部分成功 1, 失败/超时 2
 最快: amd.com (47 ms)
 Reality 推荐 (最快且支持 TLS1.3): amd.com (47 ms)
 ```
 
 字段说明：
 
-- **LATENCY**：TCP 连接 + TLS 握手的总耗时（毫秒），越低越好
+- **LATENCY**：TCP 连接 + TLS 握手的总耗时（毫秒），多次测试取平均，越低越好
 - **TLS1.3**：`yes` 支持（Reality 可用）/ `no` 不支持 / `n/a` 未检测
+- **部分成功**：格式 `平均延迟 成功次数/总次数`（如 `120 ms 1/3`），说明该域名不稳定，不建议选用
 - **TIMEOUT**：连接或握手超时（常见于无路由、被墙、IPv6 不通的域名）
 - **FAIL**：快速失败（常见于 DNS 解析失败、端口不通）
 - **Reality 推荐**：开启 `--tls13` 时，自动选出「延迟最低且支持 TLS 1.3」的域名
@@ -87,7 +90,7 @@ WWW.Microsoft.COM
 1. 优先选 **延迟最低** 且 `TLS1.3=yes` 的结果
 2. 选知名的、有全球 CDN 的大站（未指向前端机所在地区的更好）
 3. 避免选择已被墙或与你 VPS 同机房的域名
-4. 对候选域名可加测多次取稳定值：`./sni_tls_test.sh -t 2 域名`
+4. 对候选域名可提高测试次数与超时再验证：`./sni_tls_test.sh -r 5 -t 2 域名`
 
 ## 兼容性
 
