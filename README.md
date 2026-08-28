@@ -9,13 +9,13 @@
 一行命令运行（无需下载保存）：
 
 ```bash
-bash -c "$(curl -sSL https://raw.githubusercontent.com/harenaNow/SNI-TLS-test/main/sni_tls_test.sh)"
+bash -c "$(curl -sSL https://raw.githubusercontent.com/Nixiaxia/SNI-TLS-test/refs/heads/main/sni_tls_test.sh)"
 ```
 
 或管道方式：
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/harenaNow/SNI-TLS-test/main/sni_tls_test.sh | bash -s
+curl -sSL https://raw.githubusercontent.com/Nixiaxia/SNI-TLS-test/refs/heads/main/sni_tls_test.sh | bash -s
 ```
 
 下载后本地运行：
